@@ -1,0 +1,59 @@
+Workflow — Statistical Arbitrage Notebook
+
+Phase 0 — Setup
+One cell at the top of the notebook. All parameters live here and nowhere else: formation window length, trading window length, entry/exit z-score thresholds, max concurrent positions, commission rate, bid-ask half-spread, borrow cost. If you ever want to change anything, you change it here.
+
+Phase 1 — Data
+Load 15 years of daily adjusted prices for a fixed universe of liquid S&P 500 names. Use total return prices, not raw prices — splits and dividends create artificial divergences that look like signals. If you can't get point-in-time index membership, pick a fixed list of names that were large and liquid throughout the whole period, say the 200 largest by market cap in 2008, and write one sentence in the notebook acknowledging that introduces mild survivorship bias. Restrict candidates to within-sector pairs using GICS sector classifications.
+
+Phase 2 — Pair formation (Engle-Granger)
+For each pair of stocks in the same sector, within each formation window:
+
+Regress log price of stock A on log price of stock B using OLS. The slope is your hedge ratio. Save it — you'll use it in the trading window without re-estimating.
+Take the residual of that regression. That's the spread.
+Run the ADF test on the spread. If it passes at your chosen significance level, the pair is cointegrated — the spread is mean-reverting rather than wandering. Keep the pair.
+
+The ADF test and the hedge ratio come from the same regression. One step, not two.
+
+Phase 3 — Spread signal
+For each selected pair, using only formation-window data:
+
+Standardize the spread into a z-score using the formation-window mean and standard deviation.
+Estimate the mean-reversion half-life: regress the daily change in the spread on the lagged spread level. The slope gives you a decay rate; the half-life is log(2) divided by the absolute value of that slope. This tells you roughly how many days the spread takes to close halfway. Use it to set your time-based stop — if the trade hasn't closed by two half-lives, exit regardless.
+
+Entry: z-score crosses ±2. Exit: z-score returns to 0. Stop: two half-lives elapsed, or z-score hits ±3.
+
+Phase 4 — PnL engine
+Write one function that takes a dataframe of daily target weights and a dataframe of prices and returns a daily equity curve. Dollar-neutral: the long leg and short leg are equal in dollar value. Mark to market every day, not just on close of trade. Costs come off every time weights change: commission, half the bid-ask spread on both legs, borrow cost on the short leg per day held.
+
+Test it in the notebook before moving on. Build a synthetic two-stock price series where you know the right answer by hand — say stock A goes from 100 to 110 and stock B goes from 100 to 95 over three days — and assert that the function returns exactly that PnL after costs. If the assert passes, the engine is correct. Every other result in the notebook depends on this.
+
+Phase 5 — Walk-forward loop
+Roll a formation window forward through the full history in non-overlapping steps. Each iteration: form pairs on the trailing window, generate signals on the next trading window using only parameters estimated on the formation window, run through the PnL engine, store the trading-window results. Concatenate all trading windows into one out-of-sample equity curve. Pairs are re-selected from scratch each formation window — the hedge ratio from last cycle is discarded.
+
+Phase 6 — Phase 1 results
+Report net Sharpe, max drawdown, annual turnover, hit rate, gross and net of costs, broken down by calendar year, versus buy-and-hold SPY. Three plots: equity curve, drawdown, one representative pair's spread with entry and exit points marked.
+
+Phase 7 — Cross-sectional residual model
+Same walk-forward loop, same PnL engine, same cost model. The only thing that changes is how the signal is generated.
+
+On each trailing estimation window:
+
+Run PCA on the correlation matrix of daily returns. Keep enough components to explain roughly 55% of variance — typically 5 to 10 factors for a large equity universe.
+For each stock, regress its daily returns on those factors. The residual is the part of the stock's return not explained by the systematic factors — the idiosyncratic component.
+Accumulate each stock's residual returns over the lookback window into a cumulative residual series.
+Estimate mean reversion on that cumulative residual using the same half-life method from Phase 3. Discard any stock whose half-life is too long to trade — say more than 40 days.
+Standardize the cumulative residual into a z-score.
+
+Portfolio: rank all stocks by z-score. Long the bottom decile, short the top decile. Equal dollar weight within each leg. Dollar-neutral across the whole book. Sector-neutral — the sum of weights within each GICS sector must net to zero. Cap any single name at 2% of the book.
+
+Rebalancing: only rebalance a position if the z-score has moved by more than 0.5 since you entered — otherwise hold. This stops you churning the book daily on noise.
+
+Phase 8 — Comparison
+One table: Phase 1 versus Phase 2, same period, same cost assumptions, gross and net. Add a factor exposure check — regress the Phase 2 daily returns on the market return and confirm the beta is close to zero. If it isn't, your neutrality constraint has a bug.
+
+Phase 9 — Robustness (keep short)
+One sensitivity table: vary entry threshold, formation length, and cost assumptions, show Sharpe for each combination. One leakage check: replace your signals with random signals of the same frequency, confirm the result is approximately zero net of costs. One line on whether anything survives post-2015.
+
+Phase 10 — Closing section
+Two short paragraphs. What this backtest doesn't capture: intraday price impact, adverse selection, borrow availability on specific names, slippage on less liquid pairs. What would change with real execution data: you'd replace the fixed half-spread cost assumption with actual trade-by-trade fill quality, and you'd model position limits by average daily volume rather than a fixed cap.

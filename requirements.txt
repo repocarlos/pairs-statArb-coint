@@ -1,0 +1,10 @@
+ipykernel
+pandas
+numpy
+yfinance
+pandas-datareader
+lxml
+html5lib
+requests
+matplotlib
+statsmodels
